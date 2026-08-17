@@ -1,17 +1,23 @@
 # Mean-Reversion-Trading-Stratergy
 
-A statistical arbitrage research project that finds cointegrated baskets of equities within a
-sector-mixed universe, models each basket's spread as an Ornstein-Uhlenbeck (OU) process, and
+A statistical arbitrage research project that finds cointegrated baskets of equities. 
+models each basket's spread as an Ornstein-Uhlenbeck (OU) process, and
 trades it with a Kalman-filtered, Kelly-sized mean-reversion strategy — backtested walk-forward,
 out-of-sample, and validated against synthetic data simulated from each basket's own fitted model.
+
+Meucci, A. (2010). *Review of Statistical Arbitrage, Cointegration, and Multivariate
+Ornstein-Uhlenbeck*. Available at SSRN: http://ssrn.com/abstract=1404905
+
+This project's core approach — finding stable combinations via PCA on a covariance matrix, fitting
+an AR(1)/Ornstein-Uhlenbeck model to each candidate, and using the model's implied expected gain,
+z-score, and half-life to size and time trades — follows the methodology described in this paper.
 
 ## What it does
 
 1. **Universe** — 20 large-cap US equities: 10 energy companies and 10 banks (`SECURITIES_20`).
 2. **Basket construction (PCA)** — for each training window, takes the covariance matrix of log
    prices and extracts its eigenvectors. Each eigenvector defines a candidate "basket": a linear
-   combination of log prices that may be stationary (cointegrated) even though the individual
-   securities aren't.
+   combination of log prices that may be stationary.
 3. **OU fitting** — each candidate basket's spread is tested for stationarity with the Augmented
    Dickey-Fuller test, then fit as an AR(1) process via OLS. The AR(1) coefficients are converted
    into continuous-time OU parameters (`theta` = reversion speed, `mu` = equilibrium level, `sigma`
@@ -24,22 +30,19 @@ out-of-sample, and validated against synthetic data simulated from each basket's
 5. **Fractional Kelly sizing** — position size each week is the continuous-time OU-implied Kelly
    fraction (`theta*(mu - y) / sigma²`), scaled by `KELLY_FRACTION` (half-Kelly, to guard against
    estimation noise) and capped at `MAX_POSITION_FRACTION` of capital.
-6. **Real per-security execution** — a basket's eigenvector weights are gross-normalized into
-   per-leg dollar exposures, and each period's return is computed from the actual weighted simple
-   returns of the underlying securities — not from the raw delta of the log-price combination (which
-   isn't itself a tradeable return).
-7. **Walk-forward backtest** — the full date range is split into 10 equal segments; each segment is
-   used to fit baskets that are then traded, unseen, in the following segment (9 walk-forward
-   periods total). Capital is split across a period's qualifying baskets in proportion to `theta`,
-   each sleeve compounds independently, and sleeves are summed back into a single equity curve.
-8. **Simulated validation** — for every qualifying basket, a synthetic path is also simulated via
+6. **Real per-security execution** — a basket's eigenvector weights are converted to dollar
+   exposures, and each period's return is computed from the weighted
+   returns of the underlying securities.
+8. **Walk-forward backtest** — the full date range is split into 10 equal segments; each segment is
+   used to fit baskets that are then traded, in the following segment (9 walk-forward
+   periods total). Capital is split across a period's qualifying baskets in proportion to `theta`.
+9. **Simulated validation** — for every qualifying basket, a synthetic path is also simulated via
    Euler-Maruyama discretization of the OU SDE, using that basket's own fitted parameters, and run
-   through the identical trading logic. Comparing real vs. simulated performance isolates how much
-   of the real result is explained by the fitted model versus real-world deviations from it.
+   through the identical trading logic. Comparing real vs. simulated performance.
 
 ## Results
 
-From a fixed-seed run (`seed=0`) over 2014-09-15 to 2024-08-26:
+From 2014-09-15 to 2024-08-26:
 
 | Metric | Value |
 |---|---|
@@ -50,12 +53,9 @@ From a fixed-seed run (`seed=0`) over 2014-09-15 to 2024-08-26:
 | OU-simulated basket validation | 8 / 8 profitable |
 | Avg. annualised Sharpe, simulated baskets | 2.29 |
 
-The simulated-validation numbers depend on the RNG seed (the real-data numbers do not); results here
-use `seed=0` for reproducibility, as pinned in `run_walk_forward_backtest(combined_csv, seed=0)` in
-`__main__`.
+## Usage
 
-## Requirements
-
+python "OU Mean Reversion.py"
 
 This will:
 - Download weekly closing prices for the 20-security universe via `yfinance` and cache them to CSV.
@@ -81,28 +81,23 @@ All tunable parameters are constants near the top of the script:
 
 ## Known limitations
 
-- No transaction costs, bid-ask spread, or slippage are modeled.
-- No discrete share-count rounding — positions are continuous dollar/return fractions.
-- Short legs don't accrue borrow/financing costs or require margin.
+- No transaction costs.
 - `theta`/`sigma` are fit once per training window and held fixed through the whole test window
-  (only the equilibrium level `mu` is updated online, via the Kalman filter).
-- `q_var` (the Kalman filter's drift-noise variance) is not estimated from data — it's fixed as a
-  hand-picked fraction (`KALMAN_Q_RATIO = 0.01`) of the OU-implied observation-noise variance, since
-  the true equilibrium level is never directly observed to estimate its own variance from.
-- Universe is small (20 securities) and sector-concentrated (energy + banks); results may not
-  generalize to other sectors or a larger universe.
+  (only the equilibrium level `mu` is updated, via the Kalman filter).
+- `q_var` (the Kalman filter's drift-noise variance) is fraction (`KALMAN_Q_RATIO = 0.01`)
+  of the OU-implied observation-noise variance.
 
 ## Project structure
 
 Single-file script (`OU Mean Reversion.py`):
 
-- `download_weekly_prices`, `segment_dates` — data acquisition and walk-forward windowing.
+- `download_weekly_prices`, `segment_dates` — acquire data and split into 10 windows.
 - `fit_stationary_ar1`, `select_cointegrated_baskets` — ADF/AR(1)-based OU parameter fitting and
   basket selection via PCA.
 - `simulate_ou_spread` — Euler-Maruyama OU path simulation.
-- `continuous_kelly`, `kalman_filter_mu`, `kalman_kelly_growth` — signal generation, online mean
+- `continuous_kelly`, `kalman_filter_mu`, `kalman_kelly_growth` — signal generation, mean
   estimation, and per-step position sizing / return calculation.
 - `_basket_period_returns`, `_compound_sleeves`, `run_walk_forward_backtest` — walk-forward backtest
-  orchestration (real and simulated).
-- `_annualized_sharpe`, `summarize_windows`, `summarize_basket_simulations` — performance reporting.
+   (real and simulated).
+- `_annualized_sharpe`, `summarize_windows`, `summarize_basket_simulations` — evaluate performance.
 - `plot_equity_curve` — visualization.
